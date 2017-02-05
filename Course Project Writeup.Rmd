@@ -1,0 +1,120 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "M. Guffey"
+date: "February 2, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The goal of this project is to classify the manner in which subjects performed an exercise, namely the Unilateral Dumbbell Biceps Curl. Subjects were asked to perform the exercise in 5 distinct ways, and sensors placed on the dumbbell and the subjects' body recorded data.
+
+Further description as well as the source for all data used in this project is at <http://groupware.les.inf.puc-rio.br/har>.
+
+## Cleaning the Data
+
+Many aspects of this dataset need to be cleaned. First we determine columns with NA's:
+
+```{r find NAs, eval=FALSE}
+training1<-read.csv("pml-training.csv")
+numNAs<-sapply(lapply(training1,is.na),sum)
+```
+
+Inspection reveals that most columns with NA's are full of NA's, so they will be targetted for removal later:
+
+```{r target NAs, eval=FALSE}
+nonNAcols<-numNAs==0
+```
+
+Also, a large number of columns have mostly missing data, as well as several "DIV/0" errors. These columns are targetted for deletion based on the fact that they are encoded as "factors" during import due to their inconsistent data.
+
+```{r target sparse columns, eval=FALSE}
+nonFactorcols<-!sapply(training1,is.factor)
+```
+
+Next, we create a master "include list" that we will use to subset the training dataset:
+
+```{r Create Include List, eval=FALSE}
+includelist<-nonNAcols & nonFactorcols
+```
+
+The first 7 columns are irrelevant to the categorization problem, so they will be removed. Also, we need to add back the final column "classe" which is the outcome to be predicted (it was removed as a factor variable earlier).
+
+```{r Tweak incl. list, eval=FALSE}
+includelist[1:7]<-FALSE
+includelist["classe"]<-TRUE
+```
+
+Finally, we can subset our training data to a dataset that includes only (a) complete predictor variables relevant to the problem and (b) the outcome "classe."
+
+```{r Final Train Subset, eval=FALSE}
+trainreduce<-training1[,includelist]
+```
+
+## Preprocessing with PCA
+
+Even after removing bad columns, there is a large number of columns (53). Let's see if we can reduce this with principal component analysis (PCA).
+
+The code:
+```{r PCA, eval=FALSE}
+preProcess(trainreduce[-53],method = "pca")
+```
+
+Returns the following:
+
+~~~~
+Created from 19622 samples and 52 variables
+
+Pre-processing:
+  - centered (52)
+  - ignored (0)
+  - principal component signal extraction (52)
+  - scaled (52)
+
+PCA needed 25 components to capture 95 percent of the variance
+~~~~
+
+From this I conclude that PCA is a good idea in order to reduce the complexity of the problem. However, based on the guidance given in [this StackExchange question](https://stats.stackexchange.com/questions/46216/pca-and-k-fold-cross-validation-in-caret-package-in-r), I will be using the `preProcess="pca"` argument within the `train()` function rather than passing a `preProcess` argument directly.
+
+## Cross-Validation & Model Fitting
+
+10-fold cross validation is specified using `trainControl`.
+
+```{r TrainControl,eval=FALSE}
+control <- trainControl(method="cv", number=10)
+```
+
+Four different models are selecting, spanning the range from linear (LDA) to nonlinear (random forest). The seed is set before each run in order to ensure that the same folds are selected during cross-validation, so that the models' performances can be directly compared on identical datasets. 
+
+```{r Model Fits,eval=FALSE}
+set.seed(3261981)
+fit.lda <- train(classe~., data=trainreduce, method="lda", trControl=control, preProcess="pca")
+
+set.seed(3261981)
+fit.cart <- train(classe~., data=trainreduce, method="rpart", trControl=control, preProcess="pca")
+
+set.seed(3261981)
+fit.knn <- train(classe~., data=trainreduce, method="knn", trControl=control, preProcess="pca")
+
+set.seed(3261981)
+fit.rf <- train(classe~., data=trainreduce, method="rf", trControl=control, preProcess="pca")
+```
+
+As a note, the random forest (rf) fit took a significant amount of computation time to complete, even with PCA preprocessing. 
+
+##Model Accuracy & Final Model Determination
+
+The accuracy values of the model fits are presented in the table below:
+
+| Model                               | Accuracy  |
+|-------------------------------------|-----------|
+| Linear Discriminant Analysis        | 0.5277219 |
+| Classification and Regression Trees | 0.3887937 |
+| K-Nearest Neighbors                 | **0.9703902** |
+| Random Forest                       | **0.9823666** |
+
+These values are presumed to be good estimates for the out-of-sample error due to the cross-validation method used. The final two methods, K-nearest neighbors and random forest are highlighted. While both methods achieve high accuracy, the **K-nearest neighbors** method is chosen for its significantly lower computation time.
